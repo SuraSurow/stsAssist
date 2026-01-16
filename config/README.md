@@ -10,21 +10,34 @@
 
 ---
 
-## Struktura projektu (istotne elementy)
+## 📁 Struktura projektu (istotne elementy)
 
 stsAssist/
+
 ├── config/
+
 │   ├── app.json
+
 │   ├── prompt.txt
+
 │   └── README.md
-├── data/
+
+├── data
+
 │   └── sts_premier_league.csv
+
 ├── coupons/
+
 │   ├── coupon_*.txt
+
 │   └── coupon_*.csv
+
 ├── scripts/
+
 │   └── scraper.py
+
 ├── config/openai.key
+
 ├── config/emailpass.key
 
 ---
