@@ -1,0 +1,19 @@
+# build
+build/
+cmake-build-*/
+
+# Qt Creator
+*.user
+*.autosave
+
+# secrets
+APIKEY.txt
+EMAILPASS.txt
+
+# generated data
+data/*.csv
+coupons/*.csv
+coupons/*.txt
+
+# OS
+.DS_Store
