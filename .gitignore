@@ -10,6 +10,11 @@ cmake-build-*/
 APIKEY.txt
 EMAILPASS.txt
 
+config/*.key
+*.key
+*.pub
+
+
 # generated data
 data/*.csv
 coupons/*.csv

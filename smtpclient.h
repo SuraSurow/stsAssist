@@ -14,7 +14,8 @@ public:
                   const QString& from,
                   const QString& to,
                   const QString& subject,
-                  const QString& bodyText);
+                  const QString& body,
+                  bool useTls);
 
 signals:
     void log(const QString& line);
@@ -62,6 +63,7 @@ private:
     QString to;
     QString subject;
     QString body;
+    bool useTls;
 
     QString buffer;
 };

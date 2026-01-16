@@ -107,10 +107,10 @@ private:
 
     void setUiBusy(bool busy);
 
-    QString loadApiKey() const;
+    QString loadOpenAiApiKey() const;
     QString readCsvAllLines(const QString& path) const;
 
-    QString buildPrompt(const QString& csvText) const;
+    QString buildPromptFromTemplate(const QString& csvText) const;
 
     void callOpenAI(const QString& prompt);
     void saveCouponFiles(const QString& replyText) const;

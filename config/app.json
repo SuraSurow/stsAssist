@@ -1,0 +1,37 @@
+{
+  "paths": {
+    "csv": "data/sts_premier_league.csv",
+    "coupons_dir": "coupons",
+    "scraper_script": "scripts/scraper.py",
+    "prompt_file": "config/prompt.txt"
+  },
+
+  "openai": {
+    "model": "gpt-5.1",
+    "max_tokens": 1200,
+    "api_key_file": "config/openai.key"
+  },
+
+  "coupon": {
+    "default_matches": 2,
+    "default_budget": 100.0,
+    "default_risk": "Normalne"
+  },
+
+  "automation": {
+    "enabled": false,
+    "interval_minutes": 30,
+    "interval_days": 0,
+    "run_scraper_before_coupon": true,
+    "send_email_after_coupon": true
+  },
+
+  "email": {
+    "enabled": true,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "use_tls": true,
+    "from": "stsassist.bot@gmail.com",
+    "to": "twojemail@gmail.com"
+  }
+}

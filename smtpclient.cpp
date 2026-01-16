@@ -10,7 +10,6 @@ SmtpClient::SmtpClient(QObject* parent) : QObject(parent)
     connect(sock, &QSslSocket::encrypted, this, &SmtpClient::onEncrypted);
     connect(sock, &QSslSocket::readyRead, this, &SmtpClient::onReadyRead);
     connect(sock, &QSslSocket::errorOccurred, this, &SmtpClient::onError);
-
 }
 
 void SmtpClient::sendMail(const QString& host_,
@@ -20,7 +19,8 @@ void SmtpClient::sendMail(const QString& host_,
                           const QString& from_,
                           const QString& to_,
                           const QString& subject_,
-                          const QString& bodyText_)
+                          const QString& bodyText_,
+                          bool useTls_)
 {
     host = host_;
     port = port_;
@@ -30,11 +30,18 @@ void SmtpClient::sendMail(const QString& host_,
     to = to_;
     subject = subject_;
     body = bodyText_;
+    useTls = useTls_;
 
     buffer.clear();
     state = State::Wait220;
 
-    emit log(QString("SMTP connect %1:%2").arg(host).arg(port));
+    emit log(QString("SMTP connect %1:%2 (TLS=%3)")
+                 .arg(host)
+                 .arg(port)
+                 .arg(useTls ? "ON" : "OFF"));
+
+    // ZAWSZE zwykłe połączenie TCP
+    // STARTTLS robimy dopiero po EHLO
     sock->connectToHost(host, port);
 }
 
@@ -45,8 +52,9 @@ void SmtpClient::onConnected()
 
 void SmtpClient::onEncrypted()
 {
-    emit log("TLS encrypted OK");
-    // Po TLS robimy EHLO jeszcze raz
+    emit log("SMTP: TLS encrypted OK");
+
+    // Po STARTTLS MUSIMY wysłać EHLO jeszcze raz
     state = State::Ehlo2;
     sendLine("EHLO localhost");
 }
@@ -58,8 +66,10 @@ void SmtpClient::onReadyRead()
     while (true) {
         int idx = buffer.indexOf("\r\n");
         if (idx < 0) break;
+
         QString line = buffer.left(idx);
         buffer.remove(0, idx + 2);
+
         if (!line.isEmpty())
             handleLine(line);
     }
@@ -74,8 +84,7 @@ void SmtpClient::onError(QAbstractSocket::SocketError)
 void SmtpClient::sendLine(const QString& s)
 {
     emit log("C: " + s);
-    QByteArray data = (s + "\r\n").toUtf8();
-    sock->write(data);
+    sock->write((s + "\r\n").toUtf8());
 }
 
 bool SmtpClient::codeIs(const QString& line, int code) const
@@ -94,13 +103,13 @@ void SmtpClient::handleLine(const QString& line)
 
     static QRegularExpression lastLineRe(R"(^(\d{3})\s)");
     auto m = lastLineRe.match(line);
-    if (!m.hasMatch()) {
+    if (!m.hasMatch())
         return;
-    }
 
     const int code = m.captured(1).toInt();
 
     switch (state) {
+
     case State::Wait220:
         if (code == 220) {
             state = State::Ehlo1;
@@ -113,8 +122,13 @@ void SmtpClient::handleLine(const QString& line)
 
     case State::Ehlo1:
         if (code == 250) {
-            state = State::StartTls;
-            sendLine("STARTTLS");
+            if (useTls) {
+                state = State::StartTls;
+                sendLine("STARTTLS");
+            } else {
+                state = State::AuthLogin;
+                sendLine("AUTH LOGIN");
+            }
         } else {
             emit finished(false, "EHLO failed: " + line);
             state = State::Done;
@@ -124,6 +138,7 @@ void SmtpClient::handleLine(const QString& line)
     case State::StartTls:
         if (code == 220) {
             state = State::WaitTls;
+            emit log("SMTP: starting TLS");
             sock->startClientEncryption();
         } else {
             emit finished(false, "STARTTLS failed: " + line);
@@ -195,7 +210,6 @@ void SmtpClient::handleLine(const QString& line)
         if (code == 354) {
             state = State::SendBody;
 
-            // Minimalne nagłówki + UTF-8
             QString msg;
             msg += "From: <" + from + ">\r\n";
             msg += "To: <" + to + ">\r\n";
@@ -205,9 +219,9 @@ void SmtpClient::handleLine(const QString& line)
             msg += "Content-Transfer-Encoding: 8bit\r\n";
             msg += "\r\n";
             msg += body;
-            msg += "\r\n.\r\n"; // zakończenie DATA
+            msg += "\r\n.\r\n";
 
-            emit log("C: [message body...]");
+            emit log("C: [message body]");
             sock->write(msg.toUtf8());
         } else {
             emit finished(false, "DATA failed: " + line);
@@ -226,15 +240,9 @@ void SmtpClient::handleLine(const QString& line)
         break;
 
     case State::Quit:
-        if (code == 221) {
-            state = State::Done;
-            emit finished(true, "Email sent OK");
-            sock->disconnectFromHost();
-        } else {
-            state = State::Done;
-            emit finished(true, "Email sent (QUIT non-221): " + line);
-            sock->disconnectFromHost();
-        }
+        state = State::Done;
+        emit finished(true, "Email sent OK");
+        sock->disconnectFromHost();
         break;
 
     default:

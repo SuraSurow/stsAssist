@@ -1,6 +1,23 @@
 #include "mainwindow.h"
 
 
+static QJsonObject loadAppConfig()
+{
+    QFile f(QDir::current().absoluteFilePath("config/app.json"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+
+    return QJsonDocument::fromJson(f.readAll()).object();
+}
+
+static QString cfgPath(const QJsonObject& cfg, const QString& key)
+{
+    return QDir::current().absoluteFilePath(
+        cfg["paths"].toObject()[key].toString()
+        );
+}
+
+
 
 static QString ensureDir(const QString& path)
 {
@@ -220,17 +237,21 @@ QString MainWindow::apiKeyPath() const
 
 QString MainWindow::scraperPath() const
 {
-    return QDir::current().absoluteFilePath("scripts/scraper.py");
+    static QJsonObject cfg = loadAppConfig();
+    return cfgPath(cfg, "scraper_script");
 }
 
 QString MainWindow::csvPath() const
 {
-    return QDir::current().absoluteFilePath("data/sts_premier_league.csv");
+    static QJsonObject cfg = loadAppConfig();
+    return cfgPath(cfg, "csv");
 }
+
 
 QString MainWindow::couponsDir() const
 {
-    return QDir::current().absoluteFilePath("coupons");
+    static QJsonObject cfg = loadAppConfig();
+    return cfgPath(cfg, "coupons_dir");
 }
 
 void MainWindow::appendLog(const QString& s)
@@ -265,15 +286,24 @@ void MainWindow::setUiBusy(bool busy)
     spBudget->setEnabled(!busy);
 }
 
-QString MainWindow::loadApiKey() const
+QString MainWindow::loadOpenAiApiKey() const
 {
-    QFile f(apiKeyPath());
+    QJsonObject cfg = loadAppConfig();
+    QJsonObject openai = cfg["openai"].toObject();
+
+    const QString relPath = openai["api_key_file"].toString();
+    if (relPath.isEmpty())
+        return {};
+
+    QFile f(QDir::current().absoluteFilePath(relPath));
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
         return {};
 
     QTextStream in(&f);
     return in.readLine().trimmed();
 }
+
+
 
 QString MainWindow::readCsvAllLines(const QString& path) const
 {
@@ -297,40 +327,21 @@ QString MainWindow::riskLabel() const
 }
 
 
-QString MainWindow::buildPrompt(const QString& csvText) const
+QString MainWindow::buildPromptFromTemplate(const QString& csvText) const
 {
-    const int n = spMatches->value();
-    const QString risk = riskLabel();
-    const double budget = spBudget->value();
+    QJsonObject cfg = loadAppConfig();
 
-    return QString(
-               "Jesteś analitykiem typów bukmacherskich.\n"
-               "Masz dane meczowe w CSV (poniżej).\n\n"
-               "PARAMETRY:\n"
-               "- Liczba meczów na kuponie: %1\n"
-               "- Poziom ryzyka: %2 ( Możliwe są w skali od 1 do 5 Pewniak , Bezpieczne , Normalne , Ryzykowne , Niemożliwe )\n"
-               "- Budżet całkowity: %3 PLN\n\n"
-               "- 1: Kurs Bukmachera na wygraną 1 drużyny\n"
-               "- X: Kurs Bukmachera na remis \n"
-               "- 2: Kurs Bukmachera na wygraną 2 drużyny\n"
-               "WYMAGANIA:\n"
-               "- Wybierz dokładnie %1 meczów z listy.\n"
-               "- Podaj dla każdego: Mecz / Typ / Stawka / Szansa(%%) / Przewidywany zysk / Uzasadnienie (1-2 zdania).\n"
-               "- Stawki (StakePLN) mają się sumować do %3.\n"
-               "- ExpectedProfitPLN ma być liczbą (zysk netto w PLN).\n"
-               "- Bez wstępu i bez zakończenia.\n"
-               "- Swoją predykcje powinienieś oprzeć na uprzednim przeanalizowaniu "
-               "internetu i danych Premier League,historii Premier League , obecnego stanu drużyn , ceny składu , dostępności piłkarzy\n"
+    QFile f(cfgPath(cfg, "prompt_file"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
 
-               "NA KOŃCU ZAWSZE ZWRÓĆ CZYSTY BLOK CSV (bez komentarzy, bez pustych linii):\n"
-               "Match,WhichTeamToBet,StakePLN,ConfidencePercent,ExpectedProfitPLN\n\n"
-               "DANE CSV:\n"
-               "%4\n"
-               )
-        .arg(n)
-        .arg(risk)
-        .arg(QString::number(budget, 'f', 2))
-        .arg(csvText);
+    QString tpl = QTextStream(&f).readAll();
+
+    return tpl
+        .replace("{{MATCHES}}", QString::number(spMatches->value()))
+        .replace("{{RISK}}", cbRisk->currentText())
+        .replace("{{BUDGET}}", QString::number(spBudget->value(), 'f', 2))
+        .replace("{{CSV_DATA}}", csvText);
 }
 
 void MainWindow::onRefreshData()
@@ -361,7 +372,7 @@ void MainWindow::onGenerateCoupon()
         return;
     }
 
-    const QString key = loadApiKey();
+    const QString key = loadOpenAiApiKey();
     if (key.isEmpty()) {
         outputEdit->setPlainText("Brak klucza API. Sprawdź APIKEY.txt ");
         return;
@@ -373,7 +384,7 @@ void MainWindow::onGenerateCoupon()
         return;
     }
 
-    const QString prompt = buildPrompt(csvText);
+    const QString prompt = buildPromptFromTemplate(csvText);
     callOpenAI(prompt);
 }
 
@@ -383,36 +394,45 @@ void MainWindow::callOpenAI(const QString& prompt)
     setRunStatus("calling OpenAI...");
     outputEdit->setPlainText("Wysyłam do OpenAI...");
 
-    const QString key = loadApiKey();
+    // ===== API KEY =====
+    const QString key = loadOpenAiApiKey();
     if (key.isEmpty()) {
         setUiBusy(false);
         setRunStatus("missing API key");
-        outputEdit->setPlainText("Brak klucza API.");
+        outputEdit->setPlainText("Brak klucza API (sprawdź config/openai.key).");
         return;
     }
+
+    QJsonObject cfg = loadAppConfig();
+    QJsonObject openai = cfg["openai"].toObject();
+
+    const QString model = openai["model"].toString("gpt-5.1");
+    const int maxTokens = openai["max_tokens"].toInt(1200);
 
     QUrl url("https://api.openai.com/v1/responses");
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     req.setRawHeader("Authorization", ("Bearer " + key).toUtf8());
 
-    const QString model = "gpt-5.1";
-
     QJsonObject body;
     body["model"] = model;
+    body["max_output_tokens"] = maxTokens;
 
     QJsonArray input;
     QJsonObject msg;
     msg["role"] = "user";
     msg["content"] = prompt;
     input.append(msg);
+
     body["input"] = input;
 
     QNetworkReply* reply = net.post(req, QJsonDocument(body).toJson());
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+
         const QByteArray data = reply->readAll();
-        const int http = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int http =
+            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QString err = reply->errorString();
         reply->deleteLater();
 
@@ -432,13 +452,17 @@ void MainWindow::callOpenAI(const QString& prompt)
         QJsonDocument doc = QJsonDocument::fromJson(data, &pe);
         if (pe.error != QJsonParseError::NoError) {
             setRunStatus("OpenAI JSON parse error");
-            outputEdit->setPlainText("JSON parse error: " + pe.errorString() + "\n\n" + QString::fromUtf8(data));
+            outputEdit->setPlainText(
+                "JSON parse error: " + pe.errorString() + "\n\n" +
+                QString::fromUtf8(data)
+                );
             return;
         }
 
         QString text;
         const QJsonObject root = doc.object();
         const QJsonArray output = root.value("output").toArray();
+
         for (const QJsonValue& v : output) {
             const QJsonObject o = v.toObject();
             const QJsonArray content = o.value("content").toArray();
@@ -453,34 +477,41 @@ void MainWindow::callOpenAI(const QString& prompt)
         text = text.trimmed();
         if (text.isEmpty()) {
             setRunStatus("OpenAI empty reply");
-            outputEdit->setPlainText("Brak tekstu w odpowiedzi.\n\n" + QString::fromUtf8(data));
+            outputEdit->setPlainText(
+                "Brak tekstu w odpowiedzi.\n\n" +
+                QString::fromUtf8(data)
+                );
             return;
         }
 
         setRunStatus("OpenAI OK");
         outputEdit->setPlainText(text);
-        saveCouponFiles(text);
 
+        saveCouponFiles(text);
 
         if (chkSendEmail && chkSendEmail->isChecked()) {
             const QString to = edEmail ? edEmail->text().trimmed() : QString();
             if (!to.isEmpty()) {
                 sendEmailNotification(to, text);
             } else {
-                appendLog("EMAIL: brak adresu !!! dodaj poprawny adres");
+                appendLog("EMAIL: brak adresu — podaj poprawny adres");
             }
         }
     });
 }
 
 
+
 void MainWindow::saveCouponFiles(const QString& replyText) const
 {
     ensureDir(couponsDir());
 
-    const QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
-    const QString base = QDir(couponsDir()).absoluteFilePath("coupon_" + ts);
+    const QString ts = QDateTime::currentDateTime()
+                           .toString("yyyy-MM-dd_HH-mm-ss");
+    const QString base =
+        QDir(couponsDir()).absoluteFilePath("coupon_" + ts);
 
+    // ===== TXT =====
     {
         QFile f(base + ".txt");
         if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -489,45 +520,53 @@ void MainWindow::saveCouponFiles(const QString& replyText) const
         }
     }
 
+    // ===== CSV =====
     {
         QStringList lines = replyText.split('\n');
-        QStringList csvLines;
+        QStringList dataLines;
 
-        const QString header1 = "Match,WhichTeamToBet,StakePLN,ConfidencePercent,ExpectedProfitPLN";
-        const QString header2 = "Match,WhichTeamToBet,StakePLN,ConfidencePercent,ExpectedProfit";
+        const QString header =
+            "Match,WhichTeamToBet,StakePLN,ConfidencePercent,ExpectedProfitPLN";
 
-        int start = -1;
-        for (int i = 0; i < lines.size(); ++i) {
-            const QString t = lines[i].trimmed();
-            if (t == header1 || t == header2) {
-                start = i;
-                csvLines << header1;
-                break;
+        for (const QString& line : lines) {
+            const QString t = line.trimmed();
+            if (t.isEmpty())
+                continue;
+
+            // pomijamy nagłówek, gdziekolwiek by był
+            if (t.startsWith("Match,") &&
+                t.contains("StakePLN") &&
+                t.contains("ConfidencePercent")) {
+                continue;
+            }
+
+            // heurystyka: linia danych CSV
+            if (t.count(',') >= 4) {
+                dataLines << t;
             }
         }
 
-        if (start != -1) {
-            for (int i = start + 1; i < lines.size(); ++i) {
-                const QString L = lines[i].trimmed();
-                if (!L.isEmpty())
-                    csvLines << L;
-            }
-        }
+        if (!dataLines.isEmpty()) {
 
-        if (!csvLines.isEmpty()) {
-            const int maxLines = spMatches->value() + 1;
-            if (csvLines.size() > maxLines)
-                csvLines = csvLines.mid(0, maxLines);
+            // limit do liczby meczów
+            const int maxData = spMatches->value();
+            if (dataLines.size() > maxData)
+                dataLines = dataLines.mid(0, maxData);
 
             QFile f(base + ".csv");
             if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
                 QTextStream out(&f);
-                for (const QString& L : csvLines)
+
+                // NAGŁÓWEK ZAWSZE PIERWSZY
+                out << header << "\n";
+
+                for (const QString& L : dataLines)
                     out << L << "\n";
             }
         }
     }
 }
+
 
 
 void MainWindow::onAutoToggled(bool enabled)
@@ -576,25 +615,68 @@ void MainWindow::onAutoTick()
 }
 
 
-void MainWindow::sendEmailNotification(const QString& to, const QString& body)
+void MainWindow::sendEmailNotification(const QString& toOverride, const QString& body)
 {
-    // U Ciebie: login to stsassist.bot@gmail.com
-    const QString host = "smtp.gmail.com";
-    const quint16 port = 587;
+    QJsonObject cfg = loadAppConfig();
 
-    const QString user = "stsassist.bot@gmail.com";
-    const QString appPass = loadEmailPass();
+    // --- EMAIL CONFIG ---
+    QJsonObject emailCfg = cfg["email"].toObject();
+
+    const QString host = emailCfg["smtp_host"].toString();
+    const quint16 port = static_cast<quint16>(emailCfg["smtp_port"].toInt());
+    const bool useTls = emailCfg["use_tls"].toBool(true);
+
+    const QString user = emailCfg["from"].toString();
     const QString from = user;
 
-    const QString subject = "stsAssist - kupon";
+    // jeśli pole "to" w UI puste → bierz z configa
+    QString to = toOverride.trimmed();
+    if (to.isEmpty()) {
+        to = emailCfg["to"].toString();
+    }
 
-    if (appPass.isEmpty()) {
-        appendLog("SMTP: brak APP PASSWORD, uzupelnij EMAILPASS.txt ");
+    const QString subject = "stsAssist - kupon";
+    const QString appPass = loadEmailPass();
+
+    // --- WALIDACJA ---
+    if (host.isEmpty() || port == 0) {
+        appendLog("SMTP: brak hosta lub portu w app_config.json");
         return;
     }
 
-    smtp->sendMail(host, port, user, appPass, from, to, subject, body);
+    if (user.isEmpty()) {
+        appendLog("SMTP: brak pola email.from w app_config.json");
+        return;
+    }
+
+    if (to.isEmpty()) {
+        appendLog("SMTP: brak adresu odbiorcy");
+        return;
+    }
+
+    if (appPass.isEmpty()) {
+        appendLog("SMTP: brak APP PASSWORD (EMAILPASS.txt)");
+        return;
+    }
+
+    appendLog(QString("SMTP: wysyłam maila do %1 (%2:%3)")
+                  .arg(to)
+                  .arg(host)
+                  .arg(port));
+
+    smtp->sendMail(
+        host,
+        port,
+        user,
+        appPass,
+        from,
+        to,
+        subject,
+        body,
+        useTls
+        );
 }
+
 
 QString MainWindow::emailPassPath() const
 {
