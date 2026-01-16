@@ -1,165 +1,107 @@
-stsAssist – konfiguracja i uruchomienie
+# stsAssist – konfiguracja i uruchomienie
 
-stsAssist to aplikacja Qt, która:
+**stsAssist** to aplikacja Qt, która:
 
-scrapuje dane meczowe (Python),
+- scrapuje dane meczowe (Python)
+- generuje kupony bukmacherskie przy użyciu OpenAI
+- zapisuje kupony do plików TXT / CSV
+- opcjonalnie wysyła kupon e-mailem (SMTP, TLS)
+- może działać automatycznie (scheduler)
 
-generuje kupony bukmacherskie przy użyciu OpenAI,
+---
 
-zapisuje kupony do plików TXT/CSV,
+## Struktura projektu (istotne elementy)
 
-opcjonalnie wysyła kupon e-mailem (SMTP, TLS),
-
-może działać automatycznie (scheduler).
-
-📁 Struktura projektu (istotne elementy)
 stsAssist/
 ├── config/
-│   ├── app.json          # główny plik konfiguracyjny
-│   ├── prompt.txt        # prompt dla OpenAI (edytowalny)
-│   └── README.md         # opis konfiguracji (ten plik)
+│   ├── app.json
+│   ├── prompt.txt
+│   └── README.md
 ├── data/
-│   └── sts_premier_league.csv   # dane wejściowe (tworzone przez scraper)
+│   └── sts_premier_league.csv
 ├── coupons/
 │   ├── coupon_*.txt
 │   └── coupon_*.csv
 ├── scripts/
 │   └── scraper.py
-├── config/openai.key     # 🔐 klucz OpenAI (NIE w repo!)
-├── config/emailpass.key  # 🔐 hasło SMTP (NIE w repo!)
+├── config/openai.key
+├── config/emailpass.key
 
-⚠️ WAŻNE – pliki z sekretami
+---
 
-Pliki poniżej MUSZĄ zostać utworzone ręcznie
-i NIE są commitowane do repozytorium (.gitignore):
+## WAŻNE – pliki z sekretami
 
-Plik	Opis
-config/openai.key	klucz API OpenAI
-config/emailpass.key	hasło aplikacyjne SMTP
-🔑 OpenAI – konfiguracja
-1️⃣ Utwórz plik:
+Poniższe pliki MUSZĄ zostać utworzone ręcznie i NIE są commitowane do repozytorium:
+
+- config/openai.key – klucz API OpenAI
+- config/emailpass.key – hasło aplikacyjne SMTP
+
+---
+
+## OpenAI – konfiguracja
+
+Utwórz plik:
+
 config/openai.key
 
-2️⃣ Wklej TYLKO klucz API (jedna linia, bez spacji):
+Wklej TYLKO klucz API (jedna linia):
+
 sk-xxxxxxxxxxxxxxxxxxxxxxxx
 
+---
 
-🔒 Nie dodawaj tego pliku do Gita!
+## Email (SMTP – Gmail)
 
-✉️ Email (SMTP – Gmail)
+Wymagane:
+- włączone 2-step verification
+- wygenerowane App Password (Google → Security → App passwords)
 
-Aplikacja obsługuje SMTP z TLS (STARTTLS).
+Utwórz plik:
 
-1️⃣ Konto Gmail
-
-Musisz mieć:
-
-włączone 2-step verification
-
-wygenerowane App Password
-
-👉 Google → Security → App passwords → Mail
-
-2️⃣ Utwórz plik:
 config/emailpass.key
 
-3️⃣ Wklej App Password (jedna linia):
-abcd efgh ijkl mnop
+Wklej App Password (jedna linia).
 
+---
 
-(bez spacji w kodzie – Qt je ignoruje)
+## Główny plik konfiguracyjny – config/app.json
 
-📄 Główny plik konfiguracyjny – config/app.json
+Plik zawiera konfigurację ścieżek, OpenAI, automatyzacji i SMTP.
+Może być edytowany bez rekompilacji aplikacji.
 
-Przykładowa zawartość:
+---
 
-{
-  "paths": {
-    "csv": "data/sts_premier_league.csv",
-    "coupons_dir": "coupons",
-    "scraper_script": "scripts/scraper.py",
-    "prompt_file": "config/prompt.txt"
-  },
+## Prompt – config/prompt.txt
 
-  "openai": {
-    "model": "gpt-5.1",
-    "max_tokens": 1200
-  },
-
-  "coupon": {
-    "default_matches": 2,
-    "default_budget": 100.0,
-    "default_risk": "Normalne"
-  },
-
-  "automation": {
-    "enabled": false,
-    "interval_minutes": 30,
-    "interval_days": 0,
-    "run_scraper_before_coupon": true,
-    "send_email_after_coupon": true
-  },
-
-  "email": {
-    "enabled": true,
-    "smtp_host": "smtp.gmail.com",
-    "smtp_port": 587,
-    "use_tls": true,
-    "from": "stsassist.bot@gmail.com",
-    "to": "twojemail@gmail.com"
-  }
-}
-
-🧠 Prompt – config/prompt.txt
-
-Ten plik zawiera pełny prompt dla OpenAI
-i można go edytować bez rekompilacji aplikacji.
-
+Plik zawiera prompt dla OpenAI.
 Dostępne placeholdery:
+- {{MATCHES}}
+- {{RISK}}
+- {{BUDGET}}
+- {{CSV_DATA}}
 
-{{MATCHES}}
+---
 
-{{RISK}}
+## Uruchomienie aplikacji
 
-{{BUDGET}}
+1. Upewnij się, że istnieją:
+   - config/app.json
+   - config/prompt.txt
+   - config/openai.key
+   - config/emailpass.key (jeśli email włączony)
 
-{{CSV_DATA}}
+2. Uruchom aplikację
 
-▶️ Uruchomienie aplikacji
+3. Kliknij:
+   - Refresh data
+   - Generate coupon
 
-1️⃣ Upewnij się, że istnieją:
+Kupony zapiszą się w katalogu coupons/.
 
-config/app.json
+---
 
-config/prompt.txt
+## Najczęstsze problemy
 
-config/openai.key
-
-config/emailpass.key (jeśli email włączony)
-
-2️⃣ Uruchom aplikację
-
-3️⃣ Kliknij:
-
-Refresh data → scraper
-
-Generate coupon → OpenAI
-
-(opcjonalnie) Auto-generate
-
-Kupony zapiszą się w:
-
-coupons/
-
-🛑 Najczęstsze problemy
-❌ „Brak klucza API”
-
-➡️ brak config/openai.key
-
-❌ „SMTP: brak APP PASSWORD”
-
-➡️ brak config/emailpass.key
-
-❌ Brak CSV
-
-➡️ scraper nie został uruchomiony lub padł
+Brak klucza API → brak config/openai.key  
+Brak hasła SMTP → brak config/emailpass.key  
+Brak CSV → scraper nie został uruchomiony
